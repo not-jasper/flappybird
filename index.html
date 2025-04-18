@@ -237,7 +237,9 @@
     }
 
     canvas.addEventListener('touchstart', handleTap);
-    canvas.addEventListener('mousedown', handleTap); // ✅ PC support
+    window.addEventListener('keydown', e => {
+      if (['w', 'W', 'ArrowUp', ' '].includes(e.key)) handleTap();
+    });
 
     resetGame();
     update();
