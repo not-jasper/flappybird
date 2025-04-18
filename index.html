@@ -213,7 +213,7 @@
       requestAnimationFrame(update);
     }
 
-    canvas.addEventListener('touchstart', () => {
+    function handleTap() {
       if (fading) return;
       if (!gameStarted && !gameOverState) {
         gameStarted = true;
@@ -234,7 +234,10 @@
           resetGame();
         }, 500);
       }
-    });
+    }
+
+    canvas.addEventListener('touchstart', handleTap);
+    canvas.addEventListener('mousedown', handleTap); // ✅ PC support
 
     resetGame();
     update();
