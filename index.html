@@ -1,0 +1,243 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no"/>
+  <title>Flappy Bird</title>
+  <style>
+    * {margin:0;padding:0;box-sizing:border-box;user-select:none;-webkit-tap-highlight-color:transparent}
+    html,body {overflow:hidden;width:100vw;height:100vh;background:#70c5ce}
+    canvas {display:block;width:100vw;height:100vh;image-rendering:pixelated}
+    #flash, #fade {
+      position:absolute;top:0;left:0;width:100vw;height:100vh;pointer-events:none
+    }
+    #flash {background:white;opacity:0;transition:opacity 0.5s ease-out;}
+    #fade {background:black;opacity:0;transition:opacity 0.5s ease-in-out;}
+  </style>
+</head>
+<body>
+  <canvas id="game"></canvas>
+  <div id="flash"></div>
+  <div id="fade"></div>
+  <script>
+    const canvas = document.getElementById('game'), ctx = canvas.getContext('2d');
+    const flash = document.getElementById('flash'), fade = document.getElementById('fade');
+    let VIRTUAL_WIDTH = window.innerWidth, VIRTUAL_HEIGHT = window.innerHeight;
+    canvas.width = VIRTUAL_WIDTH;
+    canvas.height = VIRTUAL_HEIGHT;
+
+    const CONFIG = {
+      gravity: 0.0005625 * VIRTUAL_HEIGHT,
+      lift: -0.010625 * VIRTUAL_HEIGHT,
+      scrollSpeed: 0.009 * VIRTUAL_WIDTH,
+      groundSpeed: 0.009 * VIRTUAL_WIDTH,
+      bgSpeed: 0.0015 * VIRTUAL_WIDTH,
+      birdX: VIRTUAL_WIDTH / 4,
+      pipeGap: VIRTUAL_HEIGHT * 0.18,
+      pipeSpacing: VIRTUAL_WIDTH * 0.75,
+      pipeOffsetY: -VIRTUAL_HEIGHT * 0.35,
+      scoreScale: 1,
+      scorePerPipe: 1,
+      isDaytime: true,
+      randomTime: false,
+      pipeRandomness: VIRTUAL_HEIGHT * 0.4
+    };
+
+    const sounds = {
+      flap: new Audio('sfx/flap.mp3'),
+      hit: new Audio('sfx/hit.mp3'),
+      die: new Audio('sfx/die.mp3'),
+      score: new Audio('sfx/score.mp3'),
+      start: new Audio('sfx/start.mp3')
+    };
+    for (let key in sounds) {
+      sounds[key].load();
+      sounds[key].preload = 'auto';
+    }
+
+    const scale = val => val;
+    const loadImage = src => { const img = new Image(); img.src = src; return img; };
+
+    let bgDay = loadImage('img/bg_day.png'), bgNight = loadImage('img/bg_night.png'), bgImg;
+    let groundImg = loadImage('img/ground.png'), pipeTop = loadImage('img/toppipe.png'), pipeBot = loadImage('img/botpipe.png');
+    let getReady = loadImage('img/getready.png'), gameOver = loadImage('img/go.png');
+    let tap = [loadImage('img/tap/t0.png'), loadImage('img/tap/t1.png')];
+    let birdFrames = [loadImage('img/bird/b0.png'), loadImage('img/bird/b1.png'), loadImage('img/bird/b2.png')];
+    let numbers = Array.from({length:10},(_,i)=>loadImage(`img/numbers/${i}.png`));
+
+    let frame = 0, gameStarted = false, gameOverState = false;
+    let birdY = VIRTUAL_HEIGHT / 2, birdV = 0, angle = 0;
+    let pipes = [], groundX = 0, bgX = 0, score = 0;
+    let fading = false;
+
+    function resetGame() {
+      birdY = VIRTUAL_HEIGHT / 2; birdV = 0; pipes = []; groundX = 0; bgX = 0; angle = 0;
+      gameStarted = false; gameOverState = false; score = 0;
+      bgImg = CONFIG.randomTime ? (Math.random() < 0.5 ? bgDay : bgNight) : (CONFIG.isDaytime ? bgDay : bgNight);
+      fade.style.opacity = 0;
+      fading = false;
+    }
+
+    function drawBackground() {
+      const bgHeight = bgImg.height * VIRTUAL_HEIGHT / 480;
+      const bgY = VIRTUAL_HEIGHT - groundImg.height * VIRTUAL_HEIGHT / 480 - bgHeight + 30 * VIRTUAL_HEIGHT / 480;
+      bgX -= gameOverState ? 0 : CONFIG.bgSpeed;
+      if (bgX <= -bgImg.width * VIRTUAL_HEIGHT / 480) bgX = 0;
+      for (let i = 0; i < 13; i++) {
+        ctx.drawImage(bgImg, bgX + i * bgImg.width * VIRTUAL_HEIGHT / 480, bgY, bgImg.width * VIRTUAL_HEIGHT / 480, bgHeight);
+      }
+    }
+
+    function drawGround() {
+      groundX -= gameOverState ? 0 : CONFIG.groundSpeed;
+      if (groundX <= -groundImg.width * VIRTUAL_HEIGHT / 480) groundX = 0;
+      for (let i = 0; i < 3; i++) {
+        ctx.drawImage(groundImg, groundX + i * groundImg.width * VIRTUAL_HEIGHT / 480, VIRTUAL_HEIGHT - groundImg.height * VIRTUAL_HEIGHT / 480, groundImg.width * VIRTUAL_HEIGHT / 480, groundImg.height * VIRTUAL_HEIGHT / 480);
+      }
+    }
+
+    function drawBird() {
+      let birdFrame = birdFrames[Math.floor(frame / 10) % 3];
+      ctx.save();
+      ctx.translate(CONFIG.birdX, birdY);
+      if (gameStarted) ctx.rotate(angle);
+      ctx.drawImage(birdFrame, -birdFrame.width / 2 * VIRTUAL_HEIGHT / 480, -birdFrame.height / 2 * VIRTUAL_HEIGHT / 480, birdFrame.width * VIRTUAL_HEIGHT / 480, birdFrame.height * VIRTUAL_HEIGHT / 480);
+      ctx.restore();
+    }
+
+    function drawPipes() {
+      for (let p of pipes) {
+        p.x -= gameOverState ? 0 : CONFIG.scrollSpeed;
+        ctx.drawImage(pipeTop, p.x, p.y, pipeTop.width * VIRTUAL_HEIGHT / 480, pipeTop.height * VIRTUAL_HEIGHT / 480);
+        ctx.drawImage(pipeBot, p.x, p.y + pipeTop.height * VIRTUAL_HEIGHT / 480 + p.gap, pipeBot.width * VIRTUAL_HEIGHT / 480, pipeBot.height * VIRTUAL_HEIGHT / 480);
+        if (!gameOverState && !p.passed && CONFIG.birdX > p.x + pipeTop.width * VIRTUAL_HEIGHT / 480) {
+          p.passed = true;
+          score += CONFIG.scorePerPipe;
+          sounds.score.currentTime = 0;
+          sounds.score.play();
+        }
+      }
+      if (gameStarted && (pipes.length === 0 || pipes[pipes.length - 1].x < VIRTUAL_WIDTH - CONFIG.pipeSpacing)) {
+        let y = CONFIG.pipeOffsetY - Math.random() * CONFIG.pipeRandomness;
+        pipes.push({ x: VIRTUAL_WIDTH, y: y, gap: CONFIG.pipeGap, passed: false });
+      }
+      if (pipes.length > 0 && pipes[0].x < -pipeTop.width * VIRTUAL_HEIGHT / 480) pipes.shift();
+    }
+
+    function drawScore() {
+      let s = score.toString(), totalW = 0;
+      for (let ch of s) totalW += numbers[parseInt(ch)].width * CONFIG.scoreScale * VIRTUAL_HEIGHT / 480;
+      let x = (VIRTUAL_WIDTH - totalW) / 2;
+      for (let ch of s) {
+        let n = numbers[parseInt(ch)];
+        ctx.drawImage(n, x, 20 * VIRTUAL_HEIGHT / 480, n.width * CONFIG.scoreScale * VIRTUAL_HEIGHT / 480, n.height * CONFIG.scoreScale * VIRTUAL_HEIGHT / 480);
+        x += n.width * CONFIG.scoreScale * VIRTUAL_HEIGHT / 480;
+      }
+    }
+
+    function drawUI() {
+      if (!gameStarted && !gameOverState) {
+        ctx.drawImage(getReady, VIRTUAL_WIDTH / 2 - getReady.width * VIRTUAL_HEIGHT / 960, VIRTUAL_HEIGHT / 4, getReady.width * VIRTUAL_HEIGHT / 480, getReady.height * VIRTUAL_HEIGHT / 480);
+        let tapFrame = tap[Math.floor(frame / 30) % 2];
+        ctx.drawImage(tapFrame, VIRTUAL_WIDTH / 2 - tapFrame.width * VIRTUAL_HEIGHT / 960, VIRTUAL_HEIGHT / 2, tapFrame.width * VIRTUAL_HEIGHT / 480, tapFrame.height * VIRTUAL_HEIGHT / 480);
+      }
+      if (gameOverState) {
+        ctx.drawImage(gameOver, VIRTUAL_WIDTH / 2 - gameOver.width * VIRTUAL_HEIGHT / 960, VIRTUAL_HEIGHT / 3, gameOver.width * VIRTUAL_HEIGHT / 480, gameOver.height * VIRTUAL_HEIGHT / 480);
+        let tapFrame = tap[Math.floor(frame / 30) % 2];
+        ctx.drawImage(tapFrame, VIRTUAL_WIDTH / 2 - tapFrame.width * VIRTUAL_HEIGHT / 960, VIRTUAL_HEIGHT / 2 + 20 * VIRTUAL_HEIGHT / 480, tapFrame.width * VIRTUAL_HEIGHT / 480, tapFrame.height * VIRTUAL_HEIGHT / 480);
+      }
+    }
+
+    function update() {
+      frame++;
+      drawBackground();
+      if (gameStarted) drawPipes();
+
+      if (!gameOverState) {
+        if (gameStarted) {
+          birdV += CONFIG.gravity;
+          birdY += birdV;
+          angle = Math.min(Math.PI / 4, birdV * 0.12);
+        } else {
+          birdV = 0;
+          angle = 0;
+        }
+      } else {
+        birdV += CONFIG.gravity;
+        birdY += birdV;
+      }
+
+      if (gameStarted && !gameOverState) {
+        const birdBox = {
+          x: CONFIG.birdX - 16 * VIRTUAL_HEIGHT / 480,
+          y: birdY - 12 * VIRTUAL_HEIGHT / 480,
+          w: 32 * VIRTUAL_HEIGHT / 480,
+          h: 24 * VIRTUAL_HEIGHT / 480
+        };
+
+        for (let p of pipes) {
+          let pipeW = pipeTop.width * VIRTUAL_HEIGHT / 480;
+          let pipeTopBox = { x: p.x, y: p.y, w: pipeW, h: pipeTop.height * VIRTUAL_HEIGHT / 480 };
+          let pipeBotBox = { x: p.x, y: p.y + pipeTop.height * VIRTUAL_HEIGHT / 480 + p.gap, w: pipeW, h: pipeBot.height * VIRTUAL_HEIGHT / 480 };
+          function boxCollides(a, b) {
+            return a.x < b.x + b.w && a.x + a.w > b.x && a.y < b.y + b.h && a.y + a.h > b.y;
+          }
+          if (boxCollides(birdBox, pipeTopBox) || boxCollides(birdBox, pipeBotBox)) {
+            gameOverState = true;
+            sounds.hit.currentTime = 0;
+            sounds.hit.play();
+            setTimeout(() => {
+              sounds.die.currentTime = 0;
+              sounds.die.play();
+            }, 100);
+            flash.style.opacity = 1;
+            setTimeout(() => flash.style.opacity = 0, 100);
+            break;
+          }
+        }
+      }
+
+      if (birdY + birdFrames[0].height / 2 * VIRTUAL_HEIGHT / 480 > VIRTUAL_HEIGHT - groundImg.height * VIRTUAL_HEIGHT / 480) {
+        birdY = VIRTUAL_HEIGHT - groundImg.height * VIRTUAL_HEIGHT / 480 - birdFrames[0].height / 2 * VIRTUAL_HEIGHT / 480;
+        if (!gameOverState) {
+          gameOverState = true;
+          sounds.die.currentTime = 0;
+          sounds.die.play();
+        }
+      }
+
+      drawGround();
+      drawBird();
+      drawScore();
+      drawUI();
+      requestAnimationFrame(update);
+    }
+
+    canvas.addEventListener('touchstart', () => {
+      if (fading) return;
+      if (!gameStarted && !gameOverState) {
+        gameStarted = true;
+        return;
+      }
+      if (!gameOverState && gameStarted) {
+        if (birdY > 0 && birdY < VIRTUAL_HEIGHT - groundImg.height * VIRTUAL_HEIGHT / 480 - birdFrames[0].height * VIRTUAL_HEIGHT / 480) {
+          birdV = CONFIG.lift;
+          sounds.flap.currentTime = 0;
+          sounds.flap.play();
+        }
+      } else if (gameOverState) {
+        fading = true;
+        fade.style.opacity = 1;
+        sounds.start.currentTime = 0;
+        sounds.start.play();
+        setTimeout(() => {
+          resetGame();
+        }, 500);
+      }
+    });
+
+    resetGame();
+    update();
+  </script>
+</body>
+</html>
